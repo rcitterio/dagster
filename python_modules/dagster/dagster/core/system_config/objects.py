@@ -1,3 +1,4 @@
+'''System-provided config objects and constructors.'''
 from collections import namedtuple
 
 from dagster import check
@@ -64,9 +65,6 @@ class EnvironmentConfig(
         if expectations is None:
             expectations = ExpectationsConfig(evaluate=True)
 
-        if execution is None:
-            execution = ExecutionConfig()
-
         return super(EnvironmentConfig, cls).__new__(
             cls,
             solids=check.opt_dict_param(solids, 'solids', key_type=str, value_type=SolidConfig),
@@ -84,7 +82,7 @@ class EnvironmentConfig(
 
         return EnvironmentConfig(
             solids=construct_solid_dictionary(config['solids']),
-            execution=ExecutionConfig(**config['execution']),
+            execution=ExecutionConfig.from_dict(config.get('execution')),
             expectations=ExpectationsConfig(**config['expectations']),
             storage=StorageConfig.from_dict(config.get('storage')),
             loggers=config.get('loggers'),
@@ -100,9 +98,21 @@ class ExpectationsConfig(namedtuple('_ExpecationsConfig', 'evaluate')):
         )
 
 
-class ExecutionConfig(namedtuple('_ExecutionConfig', '')):
-    def __new__(cls):
-        return super(ExecutionConfig, cls).__new__(cls)
+class ExecutionConfig(
+    namedtuple('_ExecutionConfig', 'execution_engine_name, execution_engine_config')
+):
+    def __new__(cls, execution_engine_name, execution_engine_config):
+        return super(ExecutionConfig, cls).__new__(
+            cls, execution_engine_name=check.opt_str_param(execution_engine_name, 'execution_engine_name'), execution_engine_config
+        )
+
+    @staticmethod
+    def from_dict(config=None):
+        check.opt_dict_param(config, 'config', key_type=str)
+        if config:
+            execution_engine_name, execution_engine_config = single_item(config)
+            return ExecutionConfig(execution_engine_name, execution_engine_config.get('config'))
+        return ExecutionConfig(None, None)
 
 
 class StorageConfig(namedtuple('_FilesConfig', 'system_storage_name system_storage_config')):
