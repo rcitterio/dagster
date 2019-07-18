@@ -473,15 +473,22 @@ def _create_step_events_for_output(step_context, output):
 
     step_output_handle = StepOutputHandle.from_step(step=step, output_name=output.output_name)
 
+    for evt in _set_intermediates(step_context, step_output, step_output_handle, output):
+        yield evt
+
+    for evt in _create_output_materializations(step_context, output.output_name, output.value):
+        yield evt
+
+
+def _set_intermediates(step_context, step_output, step_output_handle, output):
     step_context.intermediates_manager.set_intermediate(
         context=step_context,
         runtime_type=step_output.runtime_type,
         step_output_handle=step_output_handle,
         value=output.value,
     )
-
-    for evt in _create_output_materializations(step_context, output.output_name, output.value):
-        yield evt
+    return []
+    # yield DagsterEvent.intermediate_set()
 
 
 def _create_output_materializations(step_context, output_name, value):

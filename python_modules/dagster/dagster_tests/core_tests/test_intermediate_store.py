@@ -32,7 +32,7 @@ class LowercaseString(RuntimeType):
         super(LowercaseString, self).__init__(
             'lowercase_string',
             'LowercaseString',
-            serialization_strategy=UppercaseSerializationStrategy(),
+            serialization_strategy=UppercaseSerializationStrategy('uppercase'),
         )
 
 

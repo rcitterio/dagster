@@ -3,54 +3,99 @@ import os
 import shutil
 
 from abc import ABCMeta, abstractmethod
+from collections import namedtuple
+from enum import Enum
 
 import six
 
 from dagster import check
-from dagster.core.types.marshal import SerializationStrategy
+from dagster.core.types.marshal import SerializationStrategy, PickleSerializationStrategy
 from dagster.utils import mkdir_p
 
 
+class ObjectStoreOperationType(Enum):
+    SET_OBJECT = 'SET_OBJECT'
+    GET_OBJECT = 'GET_OBJECT'
+    RM_OBJECT = 'RM_OBJECT'
+    CP_OBJECT = 'CP_OBJECT'
+
+
+class ObjectStoreOperationResult(
+    namedtuple(
+        '_ObjectStoreOperationResult',
+        'op key dest_key obj serialization_strategy_name object_store_name',
+    )
+):
+    pass
+
+
 class ObjectStore(six.with_metaclass(ABCMeta)):
-    def __init__(self, sep):
-        # This is / for S3, os.sep for filesystem
+    def __init__(self, name, sep):
+        '''Create an ObjectStore.
+        
+        Args:
+            name (str) -- The user-visible name of the object store.
+            sep (str) -- The path separator specific to the object store. On S3, this should be
+                '/'; on the filesystem, `os.sep`.
+        '''
+        self.name = check.str_param(name, 'name')
         self.sep = check.str_param(sep, 'sep')
 
     @abstractmethod
     def set_object(self, key, obj, serialization_strategy=None):
-        '''Implement this method to set an object in the object store.'''
+        '''Implement this method to set an object in the object store.
+        
+        Should return an ObjectStoreOperationResult with op==ObjectStoreOperationType.SET_OBJECT
+        on success.'''
 
     @abstractmethod
     def get_object(self, key, serialization_strategy=None):
-        '''Implement this method to get an object from the object store.'''
+        '''Implement this method to get an object from the object store.
+        
+        Should return an ObjectStoreOperationResult with op==ObjectStoreOperationType.GET_OBJECT
+        on success.'''
 
     @abstractmethod
     def has_object(self, key):
-        '''Implement this method to check if an object exists in the object store.'''
+        '''Implement this method to check if an object exists in the object store.
+        
+        Should return a boolean.'''
 
     @abstractmethod
     def rm_object(self, key):
-        '''Implement this method to remove an object from the object store.'''
+        '''Implement this method to remove an object from the object store.
+        
+        Should return an ObjectStoreOperationResult with op==ObjectStoreOperationType.RM_OBJECT
+        on success.'''
 
     @abstractmethod
     def cp_object(self, src, dst):
-        '''Implement this method to copy an object from one key to another in the object store.'''
+        '''Implement this method to copy an object from one key to another in the object store.
+        
+        Should return an ObjectStoreOperationResult with op==ObjectStoreOperationType.CP_OBJECT
+        on success.'''
 
     @abstractmethod
     def uri_for_key(self, key, protocol=None):
-        '''Implement this method to get a URI for a key in the object store.'''
+        '''Implement this method to get a URI for a key in the object store.
+        
+        Should return a URI as a string.'''
 
-    def key_for_paths(self, paths):
-        return self.sep.join(paths)
+    def key_for_paths(self, path_fragments):
+        '''Joins path fragments into a key using the object-store specific path separator.'''
+        return self.sep.join(path_fragments)
+
+
+DEFAULT_SERIALIZATION_STRATEGY = PickleSerializationStrategy()
 
 
 class FileSystemObjectStore(ObjectStore):  # pylint: disable=no-init
     def __init__(self):
-        super(FileSystemObjectStore, self).__init__(sep=os.sep)
+        super(FileSystemObjectStore, self).__init__(name='filesystem', sep=os.sep)
 
-    def set_object(self, key, obj, serialization_strategy=None):
+    def set_object(self, key, obj, serialization_strategy=DEFAULT_SERIALIZATION_STRATEGY):
         check.str_param(key, 'key')
-        # cannot check obj since could be arbitrary Python object
+        # obj is an arbitrary Python object
         check.opt_inst_param(
             serialization_strategy, 'serialization_strategy', SerializationStrategy
         )
@@ -68,9 +113,16 @@ class FileSystemObjectStore(ObjectStore):  # pylint: disable=no-init
             with open(key, 'wb') as f:
                 f.write(obj)
 
-        return key
+        return ObjectStoreOperationResult(
+            op=ObjectStoreOperationType.SET_OBJECT,
+            key=key,
+            dest_key=None,
+            obj=obj,
+            serialization_strategy_name=serialization_strategy.name,
+            object_store_name=self.name,
+        )
 
-    def get_object(self, key, serialization_strategy=None):
+    def get_object(self, key, serialization_strategy=DEFAULT_SERIALIZATION_STRATEGY):
         check.str_param(key, 'key')
         check.param_invariant(len(key) > 0, 'key')
 
@@ -78,7 +130,16 @@ class FileSystemObjectStore(ObjectStore):  # pylint: disable=no-init
             return serialization_strategy.deserialize_from_file(key)
         else:
             with open(key, 'rb') as f:
-                return f.read()
+                obj = f.read()
+
+        return ObjectStoreOperationResult(
+            op=ObjectStoreOperationType.SET_OBJECT,
+            key=key,
+            dest_key=None,
+            obj=obj,
+            serialization_strategy_name=serialization_strategy.name,
+            object_store_name=self.name,
+        )
 
     def has_object(self, key):
         check.str_param(key, 'key')
@@ -90,12 +151,20 @@ class FileSystemObjectStore(ObjectStore):  # pylint: disable=no-init
         check.str_param(key, 'key')
         check.param_invariant(len(key) > 0, 'key')
 
-        if not self.has_object(key):
-            return
-        if os.path.isfile(key):
-            os.unlink(key)
-        elif os.path.isdir(key):
-            shutil.rmtree(key)
+        if self.has_object(key):
+            if os.path.isfile(key):
+                os.unlink(key)
+            elif os.path.isdir(key):
+                shutil.rmtree(key)
+
+        return ObjectStoreOperationResult(
+            op=ObjectStoreOperationType.RM_OBJECT,
+            key=key,
+            dest_key=None,
+            obj=None,
+            serialization_strategy_name=None,
+            object_store_name=self.name,
+        )
 
     def cp_object(self, src, dst):
         check.invariant(not os.path.exists(dst), 'Path already exists {}'.format(dst))
@@ -109,6 +178,15 @@ class FileSystemObjectStore(ObjectStore):  # pylint: disable=no-init
             shutil.copytree(src, dst)
         else:
             check.failed('should not get here')
+
+        return ObjectStoreOperationResult(
+            op=ObjectStoreOperationType.CP_OBJECT,
+            key=src,
+            dest_key=dst,
+            obj=None,
+            serialization_strategy_name=None,
+            object_store_name=self.name,
+        )
 
     def uri_for_key(self, key, protocol=None):
         check.str_param(key, 'key')
