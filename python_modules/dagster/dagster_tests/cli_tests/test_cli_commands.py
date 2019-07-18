@@ -309,7 +309,7 @@ def test_execute_preset_command():
         ],
     )
 
-    assert add_result.stdout
+    assert add_result.stdout or add_result.stdout == ''
 
 
 def test_execute_command():
