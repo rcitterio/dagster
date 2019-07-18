@@ -19,7 +19,12 @@ from dagster import (
     execute_pipeline,
 )
 from dagster.core.events.log import DagsterEventRecord
-from dagster.core.events import DagsterEvent, DagsterEventType, PipelineProcessStartedData
+from dagster.core.events import (
+    DagsterEvent,
+    DagsterEventType,
+    PipelineProcessStartedData,
+    PipelineProcessStartData,
+)
 from dagster.utils.error import serializable_error_info_from_exc_info, SerializableErrorInfo
 from dagster.utils import get_multiprocessing_context
 from dagster_graphql.implementation.pipeline_run_storage import PipelineRun
@@ -60,6 +65,8 @@ def build_synthetic_pipeline_error_record(run_id, error_info, pipeline_name):
 
 
 def build_process_start_event(run_id, pipeline_name):
+    check.str_param(pipeline_name, 'pipeline_name')
+    check.str_param(run_id, 'run_id')
     message = 'About to start process for pipeline {pipeline_name} run_id {run_id}'.format(
         pipeline_name=pipeline_name, run_id=run_id
     )
@@ -72,7 +79,11 @@ def build_process_start_event(run_id, pipeline_name):
         timestamp=time.time(),
         error_info=None,
         pipeline_name=pipeline_name,
-        dagster_event=DagsterEvent(DagsterEventType.PIPELINE_PROCESS_START.value, pipeline_name),
+        dagster_event=DagsterEvent(
+            event_type_value=DagsterEventType.PIPELINE_PROCESS_START.value,
+            pipeline_name=pipeline_name,
+            event_specific_data=PipelineProcessStartData(pipeline_name, run_id),
+        ),
     )
 
 
